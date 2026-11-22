@@ -177,7 +177,7 @@ audio{width:100%;max-width:520px;margin:12px 0}
         <div id="rec-idle-area">
           <button class="btn big recbtn" id="rec-btn" type="button" disabled>● Start recording <span class="ar">ابدأ التسجيل</span></button>
         </div>
-        <div class="rectime hidden" id="rec-timer"><span class="dot"></span><span id="rec-time">0:00</span></div>
+        <div class="rectime hidden" id="rec-timer"><span class="dot"></span><span id="rec-label" style="font-size:20px"></span><span id="rec-time">0:00</span></div>
         <div class="small muted" id="rec-limit"></div>
 
         <div id="playback" class="hidden">
@@ -244,6 +244,18 @@ audio{width:100%;max-width:520px;margin:12px 0}
       <button class="btn secondary" id="code-copy" type="button">Copy</button>
       <button class="btn big" id="code-ok" type="button">OK – I saved it <span class="ar">حسناً</span></button>
     </div>
+  </div>
+</div>
+
+<!-- Microphone modal (hands-free mode) -->
+<div id="mic-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mic-title">
+  <div class="card">
+    <h2 id="mic-title">Ready to start? <span class="ar small">هل أنت جاهز؟</span></h2>
+    <p>The exam runs <b>automatically</b>: preparation timer → your answer is recorded by itself → the next question starts. You cannot pause or re-record, so sit in a quiet place.</p>
+    <p class="ar">يعمل الاختبار <b>تلقائياً</b>: مؤقت التحضير ← يبدأ تسجيل إجابتك وحده ← ثم يبدأ السؤال التالي. لا يمكن الإيقاف المؤقت أو إعادة التسجيل، فاجلس في مكان هادئ.</p>
+    <p>Press the button, then press <b>Allow</b> when the browser asks for the microphone.</p>
+    <div id="mic-msg" aria-live="polite"></div>
+    <div class="row" style="justify-content:center;margin-top:10px"><button class="btn big" id="mic-go" type="button">🎤 Allow microphone and start <span class="ar">اسمح بالميكروفون وابدأ</span></button></div>
   </div>
 </div>
 
