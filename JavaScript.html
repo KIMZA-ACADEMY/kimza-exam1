@@ -1,0 +1,902 @@
+/* ============================================================================
+ *  KIMZA Academy – Oral English Examination – front-end program
+ *  (This file is plain JavaScript. It is called JavaScript.html because that is the
+ *   name requested; index.html and teacher.html download it and run it.)
+ *
+ *  >>> THE ONLY VALUE YOU MUST CHANGE IS THE NEXT LINE <<<
+ * ============================================================================ */
+var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtfVY2ON099nv0LvLFzJDDmsDQtFIQf5CxGq6U9jKSDcrBMexg/exec';   // e.g. https://script.google.com/macros/s/AKfycb.../exec
+
+(function () {
+  'use strict';
+
+  /* ======================================================================
+   *  COMMON: tiny helpers + the ONE API client (fetch POST, text/plain JSON)
+   * ====================================================================== */
+  function $(id) { return document.getElementById(id); }
+  function show(el) { if (typeof el === 'string') el = $(el); if (el) el.classList.remove('hidden'); }
+  function hide(el) { if (typeof el === 'string') el = $(el); if (el) el.classList.add('hidden'); }
+  function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function fmtTime(sec) { sec = Math.max(0, Math.ceil(sec)); return Math.floor(sec / 60) + ':' + pad2(sec % 60); }
+  function uuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    var a = new Uint8Array(16); (window.crypto || window.msCrypto).getRandomValues(a);
+    return Array.prototype.map.call(a, function (b) { return pad2(b.toString(16)); }).join('').replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+  }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function storeGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
+  function storeSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+  function storeDel(k) { try { window.localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+  function fmtDate(iso) {
+    if (!iso) return '–';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '–';
+    return d.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function ApiError(code, message) { this.code = code; this.message = message; this.isApiError = true; }
+  ApiError.prototype = Object.create(Error.prototype);
+
+  var clockOffset = 0;   // serverTime - browserTime, so the countdown follows the SERVER clock
+  function serverNow() { return Date.now() + clockOffset; }
+
+  async function callOnce(body, timeoutMs) {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
+    var t0 = Date.now(), resp, text;
+    try {
+      resp = await fetch(KIMZA_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },   // "simple" request: no CORS pre-flight
+        body: body, redirect: 'follow', credentials: 'omit', signal: ctrl.signal
+      });
+      text = await resp.text();
+    } catch (e) {
+      throw new ApiError('NETWORK_ERROR', 'No internet connection, or the server did not answer.');
+    } finally { clearTimeout(timer); }
+    var json;
+    try { json = JSON.parse(text); } catch (e2) {
+      throw new ApiError('BAD_RESPONSE', 'The server sent an unexpected answer. Check the Web App URL and the deployment access settings.');
+    }
+    if (json && typeof json.serverTime === 'number') { clockOffset = json.serverTime - (t0 + Date.now()) / 2; }
+    if (!json || json.ok !== true) {
+      var er = (json && json.error) || {};
+      throw new ApiError(er.code || 'SERVER_ERROR', er.message || 'Unexpected server error.');
+    }
+    return json.data;
+  }
+
+  /** api('action', {params}) -> data.  Retries network failures / busy server (all actions are idempotent). */
+  async function api(action, payload, opts) {
+    opts = opts || {};
+    if (!KIMZA_API_URL || KIMZA_API_URL.indexOf('PASTE_YOUR') === 0) {
+      throw new ApiError('NOT_CONFIGURED', 'The website is not connected yet. The Web App URL must be pasted into JavaScript.html.');
+    }
+    var body = JSON.stringify(Object.assign({ action: action }, payload || {}));
+    var retries = opts.retries === undefined ? 2 : opts.retries;
+    var timeout = opts.timeout || 45000;
+    for (var attempt = 0; ; attempt++) {
+      try { return await callOnce(body, timeout); }
+      catch (e) {
+        var retryable = e && (e.code === 'NETWORK_ERROR' || e.code === 'SERVER_BUSY' || e.code === 'BAD_RESPONSE');
+        if (!retryable || attempt >= retries) throw e;
+        await sleep(1000 * Math.pow(2, attempt));
+      }
+    }
+  }
+
+  function bootError(html) {
+    hide('screen-loading');
+    var box = $('boot-error');
+    box.className = 'card msg err';
+    box.innerHTML = html;
+  }
+
+  function setMsg(el, kind, en, ar) {
+    if (typeof el === 'string') el = $(el);
+    if (!el) return;
+    if (!en) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="msg ' + kind + '" role="' + (kind === 'err' ? 'alert' : 'status') + '">' + esc(en) +
+      (ar ? '<div class="ar small">' + esc(ar) + '</div>' : '') + '</div>';
+  }
+
+  function errText(e) {
+    var map = {
+      NETWORK_ERROR: ['No internet connection, or the server did not answer. Your saved answers are safe. Check your connection and try again.', 'لا يوجد اتصال بالإنترنت أو أن الخادم لا يستجيب. إجاباتك المحفوظة آمنة. تحقق من الاتصال وحاول مرة أخرى.'],
+      SERVER_BUSY: ['The server is busy. Please try again in a moment.', 'الخادم مشغول. حاول مرة أخرى بعد قليل.'],
+      PREP_NOT_FINISHED: ['The preparation time is not finished yet.', 'وقت التحضير لم ينتهِ بعد.'],
+      RECORDING_TOO_SHORT: ['The recording is too short. Please record again.', 'التسجيل قصير جداً. سجّل مرة أخرى.'],
+      INVALID_CREDENTIALS: ['This examination could not be verified. Please use your recovery code.', 'تعذّر التحقق من هذا الاختبار. استخدم رمز الاسترجاع.']
+    };
+    if (e && map[e.code]) return map[e.code];
+    return [(e && e.message) || 'Something went wrong. Please try again.', 'حدث خطأ. حاول مرة أخرى.'];
+  }
+
+  function blobFromBase64(b64, mime) {
+    var bin = atob(b64), len = bin.length, bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  }
+
+  function blobToBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { var s = String(fr.result); resolve(s.substring(s.indexOf(',') + 1)); };
+      fr.onerror = function () { reject(new Error('read failed')); };
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  /* ======================================================================
+   *  STUDENT APPLICATION
+   * ====================================================================== */
+  function studentApp() {
+    var STORE_KEY = 'kimza_exam_v1';
+    var S = {
+      config: null, questions: [], attemptId: '', code: '', state: null,
+      q: 0, part: 1, slots: {},
+      prepTimer: null, recTimer: null,
+      stream: null, recorder: null, chunks: [], recStart: 0, recKey: '', recMime: '',
+      busy: false
+    };
+    var SCREENS = ['screen-loading', 'screen-welcome', 'screen-exam', 'screen-review', 'screen-done'];
+    function showScreen(id) { SCREENS.forEach(function (s) { hide(s); }); hide('boot-error'); show(id); window.scrollTo(0, 0); }
+    function Q(n) { return S.questions[n - 1]; }
+    function slotKey(q, p) { return q + '-' + p; }
+    function slot(q, p) { var k = slotKey(q, p); if (!S.slots[k]) S.slots[k] = { status: 'idle' }; return S.slots[k]; }
+    function isSaved(q, p) { return !!(S.state && S.state.recordings && S.state.recordings[slotKey(q, p)]); }
+    function questionDone(q) { return S.state.completedQuestions.indexOf(q) !== -1; }
+    function nextQ() { return S.state.nextQuestion; }
+    function deadlineOf(q) { return S.state.prepDeadlines ? S.state.prepDeadlines[String(q)] : undefined; }
+    function prepRemaining(q) { var d = deadlineOf(q); return d ? (d - serverNow()) / 1000 : Infinity; }
+    function hasUnsaved() {
+      return Object.keys(S.slots).some(function (k) { var st = S.slots[k].status; return st === 'recording' || st === 'recorded' || st === 'uploading'; });
+    }
+
+    /* ---------- start / resume ---------- */
+    function saveCreds() { storeSet(STORE_KEY, JSON.stringify({ attemptId: S.attemptId, code: S.code })); }
+
+    async function init() {
+      try {
+        S.config = await api('getConfig', {});
+        S.questions = S.config.questions;
+      } catch (e) {
+        var t = errText(e);
+        bootError('<b>' + esc(t[0]) + '</b><br><br><button class="btn" onclick="location.reload()">Try again</button>');
+        return;
+      }
+      var saved = null;
+      try { saved = JSON.parse(storeGet(STORE_KEY) || 'null'); } catch (e2) { saved = null; }
+      if (saved && saved.attemptId && saved.code) {
+        S.attemptId = saved.attemptId; S.code = saved.code;
+        try {
+          var st = await api('getStatus', { attemptId: S.attemptId, recoveryCode: S.code });
+          enterExam(st.state);
+          return;
+        } catch (e3) {
+          if (e3.code === 'INVALID_CREDENTIALS') { storeDel(STORE_KEY); S.attemptId = ''; S.code = ''; }
+          else {
+            var t3 = errText(e3);
+            bootError('<b>' + esc(t3[0]) + '</b><br><span class="ar">' + esc(t3[1]) + '</span><br><br><button class="btn" onclick="location.reload()">Try again</button>');
+            return;
+          }
+        }
+      }
+      showScreen('screen-welcome');
+    }
+
+    async function onStart(ev) {
+      ev.preventDefault();
+      if (S.busy) return;
+      var name = $('student-name').value.replace(/\s+/g, ' ').trim();
+      var err = $('start-error');
+      hide(err);
+      if (name.length < 5 || name.split(' ').length < 2) {
+        err.textContent = 'Please write your full name (first and last name). / اكتب اسمك الكامل (الاسم الأول والأخير).';
+        show(err); return;
+      }
+      S.busy = true;
+      var btn = $('start-btn'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Please wait…';
+      var key = storeGet('kimza_start_key') || uuid();    // same key on retry => no duplicate attempt
+      storeSet('kimza_start_key', key);
+      try {
+        var res = await api('startExam', { studentName: name, requestKey: key }, { retries: 3 });
+        storeDel('kimza_start_key');
+        S.attemptId = res.state.attemptId; S.code = res.recoveryCode; saveCreds();
+        enterExam(res.state, true);
+      } catch (e) {
+        if (e.code === 'NAME_EXISTS' || e.code === 'INVALID_NAME') storeDel('kimza_start_key');
+        err.textContent = errText(e)[0]; show(err);
+      } finally {
+        S.busy = false; btn.disabled = false; btn.innerHTML = 'Start the examination <span class="ar">ابدأ الاختبار</span>';
+      }
+    }
+
+    async function onResume(ev) {
+      ev.preventDefault();
+      if (S.busy) return;
+      var err = $('resume-error'); hide(err);
+      var code = $('resume-code').value;
+      S.busy = true;
+      var btn = $('resume-btn'); btn.disabled = true;
+      try {
+        var res = await api('resumeExam', { recoveryCode: code });
+        S.attemptId = res.attemptId; S.code = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        S.code = S.code.substring(0, 5) + '-' + S.code.substring(5);
+        saveCreds();
+        enterExam(res.state);
+      } catch (e) { err.textContent = errText(e)[0]; show(err); }
+      finally { S.busy = false; btn.disabled = false; }
+    }
+
+    function enterExam(state, isNew) {
+      S.state = state;
+      show('who');
+      $('who-name').textContent = state.studentName;
+      if (state.status !== 'InProgress') { showDone(); return; }
+      if (isNew) {
+        showCodeModal(function () { openQuestion(state.nextQuestion); });
+      } else if (state.nextQuestion > S.questions.length) {
+        showReview();
+      } else {
+        openQuestion(state.nextQuestion);
+      }
+    }
+
+    function showCodeModal(onOk) {
+      $('code-value').textContent = S.code;
+      show('code-modal');
+      $('code-ok').onclick = function () { hide('code-modal'); if (onOk) onOk(); };
+      $('code-ok').focus();
+    }
+
+    /* ---------- header progress ---------- */
+    function updateHeader() {
+      var done = S.state.completedQuestions.length, total = S.questions.length;
+      $('who-progress').textContent = done + ' of ' + total + ' questions saved';
+      $('progress-bar').style.width = Math.round(done / total * 100) + '%';
+      $('progress-label').textContent = 'Question ' + S.q + ' of ' + total + ' · ' + done + ' saved';
+      var html = '';
+      for (var i = 1; i <= total; i++) {
+        var cls = 'pill' + (questionDone(i) ? ' done' : '') + (i === S.q ? ' current' : '');
+        var locked = i > nextQ();
+        html += '<button type="button" class="' + cls + '" data-q="' + i + '"' + (locked ? ' disabled' : '') +
+          ' aria-label="Question ' + i + (questionDone(i) ? ' (saved)' : '') + '"' + (i === S.q ? ' aria-current="step"' : '') + '>' + (questionDone(i) && i !== S.q ? '✓ ' : '') + i + '</button>';
+      }
+      $('pills').innerHTML = html;
+    }
+
+    /* ---------- questions ---------- */
+    async function openQuestion(q) {
+      if (q > S.questions.length) { showReview(); return; }
+      await stopEverything();
+      S.q = q;
+      var qq = Q(q);
+      S.part = 1;
+      for (var p = 1; p <= qq.parts; p++) { if (!isSaved(q, p)) { S.part = p; break; } }
+      showScreen('screen-exam');
+      $('who').classList.remove('hidden');
+      updateHeader();
+      renderQuestionStatic();
+      setMsg('msg-area', '', '');
+
+      if (q === nextQ() && !deadlineOf(q)) {
+        $('prep-time').textContent = '…';
+        try {
+          var res = await api('beginQuestion', { attemptId: S.attemptId, recoveryCode: S.code, question: q });
+          S.state = res.state;
+        } catch (e) {
+          if (e.code === 'INVALID_CREDENTIALS') { return credsLost(); }
+          var t = errText(e);
+          setMsg('msg-area', 'err', t[0], t[1]);
+          $('prep-time').textContent = '–';
+          var retry = document.createElement('button'); retry.className = 'btn'; retry.textContent = 'Try again';
+          retry.onclick = function () { openQuestion(q); };
+          $('msg-area').appendChild(retry);
+          return;
+        }
+      } else if (q !== nextQ()) {
+        api('saveProgress', { attemptId: S.attemptId, recoveryCode: S.code, currentQuestion: q }, { retries: 0 }).catch(function () { /* not important */ });
+      }
+      if (S.q !== q) return;
+      updateHeader();
+      renderRecorder();
+      startPrepTicker();
+    }
+
+    function credsLost() {
+      storeDel(STORE_KEY);
+      bootError('<b>Your examination could not be verified.</b><br>Please go back and use your recovery code.<br><br><button class="btn" onclick="location.reload()">Back</button>');
+    }
+
+    function renderQuestionStatic() {
+      var qq = Q(S.q);
+      $('q-number').textContent = 'Question ' + qq.id;
+      $('q-title').textContent = qq.title;
+      $('q-inst-en').textContent = qq.instructionEn;
+      $('q-inst-ar').textContent = qq.instructionAr;
+      var body = '';
+      if (qq.type === 'translate') {
+        body = '<div class="prompt ar" lang="ar" dir="rtl">' + esc(qq.promptAr) + '</div>';
+      } else if (qq.type === 'speak') {
+        body = '<div class="prompt en">' + esc(qq.promptEn) + '</div><p><b>Requirements:</b></p><ul class="req">' +
+          qq.requirements.map(function (r, i) { return '<li>' + esc(r) + '<div class="ar small muted">' + esc(qq.requirementsAr[i] || '') + '</div></li>'; }).join('') + '</ul>';
+      } else if (qq.type === 'story') {
+        body = '<h3>The story</h3><div class="story">' + esc(qq.story) + '</div>';
+      }
+      $('q-body').innerHTML = body;
+      var partsEl = $('parts');
+      if (qq.parts > 1) {
+        var html = '';
+        for (var p = 1; p <= qq.parts; p++) {
+          html += '<button type="button" class="pill' + (isSaved(qq.id, p) ? ' done' : '') + (p === S.part ? ' current' : '') + '" data-part="' + p + '">' + (isSaved(qq.id, p) ? '✓ ' : '') + 'Answer ' + p + '</button>';
+        }
+        partsEl.innerHTML = html; show(partsEl);
+        var lab = $('part-label');
+        lab.innerHTML = '<div class="prompt en" style="font-size:20px"><b>Question ' + S.part + ':</b> ' + esc(qq.subQuestions[S.part - 1]) + '</div>';
+        show(lab);
+      } else { hide(partsEl); hide('part-label'); }
+    }
+
+    /* ---------- preparation countdown ---------- */
+    function startPrepTicker() {
+      clearInterval(S.prepTimer);
+      tickPrep();
+      S.prepTimer = setInterval(tickPrep, 250);
+    }
+    function tickPrep() {
+      if (!S.state || !S.q) return;
+      var q = S.q, prep = $('prep'), done = questionDone(q);
+      if (done) { hide(prep); clearInterval(S.prepTimer); return; }
+      show(prep);
+      var rem = prepRemaining(q);
+      if (rem === Infinity) { return; }
+      if (rem > 0) {
+        prep.classList.remove('finished');
+        $('prep-time').textContent = fmtTime(rem);
+        $('prep-title').textContent = 'Preparation time – get ready';
+        $('prep-help').textContent = 'The recording button opens when the timer reaches 0:00.';
+        $('prep-help-ar').textContent = 'سيُفتح زر التسجيل عندما يصل المؤقت إلى 0:00.';
+        if ($('rec-btn').dataset.prep !== '1') { $('rec-btn').dataset.prep = '1'; renderRecorder(); }
+      } else {
+        prep.classList.add('finished');
+        $('prep-time').textContent = '0:00';
+        $('prep-title').textContent = 'Time is up – you can record now';
+        $('prep-help').textContent = 'Press the big button to start recording.';
+        $('prep-help-ar').textContent = 'اضغط على الزر الكبير لبدء التسجيل.';
+        if ($('rec-btn').dataset.prep === '1') { $('rec-btn').dataset.prep = '0'; renderRecorder(); }
+        clearInterval(S.prepTimer);
+        S.prepTimer = null;
+      }
+    }
+
+    /* ---------- recorder UI ---------- */
+    function renderRecorder() {
+      var q = S.q, p = S.part, sl = slot(q, p), qq = Q(q);
+      var saved = isSaved(q, p);
+      var prepDone = prepRemaining(q) <= 0;
+      var btn = $('rec-btn');
+      hide('playback'); hide('saved-box'); hide('rec-timer'); show('rec-idle-area');
+      $('rec-limit').textContent = 'Maximum recording time: ' + fmtTime(qq.maxRecordSeconds) + '.';
+      show('rec-limit');
+      hide('next-btn');
+      btn.dataset.prep = prepDone ? '0' : '1';
+      btn.classList.remove('recording');
+
+      if (saved) {
+        hide('rec-idle-area'); hide('rec-limit'); show('saved-box');
+        var sp = $('saved-player');
+        var existing = $('load-saved');
+        if (existing) existing.remove();
+        if (sl.url) { sp.src = sl.url; show(sp); }
+        else {
+          hide(sp); sp.removeAttribute('src');
+          var lb = document.createElement('button');
+          lb.type = 'button'; lb.id = 'load-saved'; lb.className = 'btn secondary'; lb.textContent = '▶ Load my saved recording';
+          lb.onclick = loadSavedAudio;
+          $('saved-box').appendChild(lb);
+        }
+        showNextButton();
+        return;
+      }
+      if (sl.status === 'recording') {
+        btn.disabled = false; btn.classList.add('recording'); btn.innerHTML = '■ Stop recording <span class="ar">إيقاف التسجيل</span>';
+        show('rec-timer');
+      } else if (sl.status === 'recorded' || sl.status === 'uploading') {
+        hide('rec-idle-area'); hide('rec-limit'); show('playback');
+        $('player').src = sl.url;
+        var up = sl.status === 'uploading';
+        $('save-btn').disabled = up; $('redo-btn').disabled = up;
+        $('save-btn').innerHTML = up ? '<span class="spinner"></span> Saving… please wait' : '✔ Save this answer <span class="ar small">احفظ الإجابة</span>';
+      } else {
+        btn.disabled = !prepDone;
+        btn.innerHTML = '● Start recording <span class="ar">ابدأ التسجيل</span>';
+      }
+    }
+
+    function showNextButton() {
+      var qq = Q(S.q), nb = $('next-btn');
+      if (!isSaved(S.q, S.part)) { hide(nb); return; }
+      var nextPart = 0;
+      for (var p = 1; p <= qq.parts; p++) { if (!isSaved(S.q, p)) { nextPart = p; break; } }
+      if (nextPart) { nb.innerHTML = 'Next answer → <span class="ar">الإجابة التالية</span>'; nb.dataset.mode = 'part'; nb.dataset.part = nextPart; }
+      else if (S.q < S.questions.length) { nb.innerHTML = 'Continue to question ' + (S.q + 1) + ' → <span class="ar">السؤال التالي</span>'; nb.dataset.mode = 'question'; }
+      else { nb.innerHTML = 'Review and submit → <span class="ar">المراجعة والإرسال</span>'; nb.dataset.mode = 'review'; }
+      show(nb);
+    }
+
+    async function loadSavedAudio() {
+      var b = $('load-saved'); b.disabled = true; b.innerHTML = '<span class="spinner dark"></span> Loading…';
+      try {
+        var res = await api('getAudio', { attemptId: S.attemptId, recoveryCode: S.code, question: S.q, part: S.part });
+        var blob = blobFromBase64(res.audioBase64, res.mimeType);
+        slot(S.q, S.part).url = URL.createObjectURL(blob);
+        renderRecorder();
+      } catch (e) { var t = errText(e); setMsg('msg-area', 'err', t[0], t[1]); b.disabled = false; b.textContent = '▶ Load my saved recording'; }
+    }
+
+    /* ---------- microphone + MediaRecorder ---------- */
+    function supportsRecording() {
+      return !!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    }
+    function pickMime() {
+      var list = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg'];
+      for (var i = 0; i < list.length; i++) {
+        try { if (MediaRecorder.isTypeSupported(list[i])) return list[i]; } catch (e) { /* ignore */ }
+      }
+      return '';
+    }
+    function micError(e) {
+      var n = e && e.name;
+      if (n === 'NotAllowedError' || n === 'PermissionDeniedError' || n === 'SecurityError') {
+        return ['Microphone permission was denied. Please allow the microphone: tap the lock/microphone icon next to the website address, choose "Allow", then press Start recording again.',
+          'تم رفض إذن الميكروفون. اسمح باستخدام الميكروفون من أيقونة القفل بجانب عنوان الموقع، ثم اضغط «ابدأ التسجيل» مرة أخرى.'];
+      }
+      if (n === 'NotFoundError' || n === 'DevicesNotFoundError' || n === 'OverconstrainedError') {
+        return ['No microphone was found. Connect a microphone or headset and try again.', 'لم يتم العثور على ميكروفون. وصّل ميكروفوناً أو سماعة وحاول مرة أخرى.'];
+      }
+      if (n === 'NotReadableError' || n === 'AbortError') {
+        return ['The microphone is being used by another app. Close the other app and try again.', 'الميكروفون مستخدم في تطبيق آخر. أغلق التطبيق الآخر وحاول مرة أخرى.'];
+      }
+      return ['The microphone could not be started (' + (n || 'unknown error') + ').', 'تعذّر تشغيل الميكروفون.'];
+    }
+
+    async function onRecButton() {
+      var sl = slot(S.q, S.part);
+      if (sl.status === 'recording') { stopRecording(); return; }
+      if (prepRemaining(S.q) > 0) return;
+      setMsg('msg-area', '', '');
+      if (!window.isSecureContext) {
+        setMsg('msg-area', 'err', 'Recording needs a secure (https) website address.', 'التسجيل يحتاج إلى عنوان موقع آمن (https).'); return;
+      }
+      if (!supportsRecording()) {
+        setMsg('msg-area', 'err', 'Your browser cannot record audio. Please use the newest Chrome, Edge, Firefox, or Safari (iPhone: Safari 14.3 or newer).',
+          'متصفحك لا يدعم تسجيل الصوت. استخدم أحدث إصدار من Chrome أو Edge أو Firefox أو Safari.'); return;
+      }
+      var btn = $('rec-btn'); btn.disabled = true;
+      try {
+        S.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      } catch (e) {
+        var t = micError(e); setMsg('msg-area', 'err', t[0], t[1]); btn.disabled = false; return;
+      }
+      var mime = pickMime(), rec;
+      try { rec = mime ? new MediaRecorder(S.stream, { mimeType: mime, audioBitsPerSecond: 32000 }) : new MediaRecorder(S.stream); }
+      catch (e2) {
+        try { rec = new MediaRecorder(S.stream); } catch (e3) {
+          releaseStream(); setMsg('msg-area', 'err', 'Your browser cannot record audio in this mode.', 'متصفحك لا يستطيع تسجيل الصوت.'); btn.disabled = false; return;
+        }
+      }
+      S.recorder = rec; S.chunks = []; S.recMime = rec.mimeType || mime || '';
+      S.recKey = slotKey(S.q, S.part);
+      var key = S.recKey, qq = Q(S.q);
+      rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) S.chunks.push(ev.data); };
+      rec.onerror = function () { setMsg('msg-area', 'err', 'The recording stopped because of an error. Please record again.', 'توقف التسجيل بسبب خطأ. سجّل مرة أخرى.'); };
+      rec.onstop = function () { finishRecording(key); };
+      S.recStart = performance.now();
+      rec.start(1000);
+      slot(S.q, S.part).status = 'recording';
+      $('rec-time').textContent = '0:00';
+      clearInterval(S.recTimer);
+      S.recTimer = setInterval(function () {
+        var el = (performance.now() - S.recStart) / 1000;
+        $('rec-time').textContent = fmtTime(Math.floor(el));
+        if (el >= qq.maxRecordSeconds) { stopRecording(); }
+      }, 250);
+      renderRecorder();
+    }
+
+    function releaseStream() {
+      if (S.stream) { S.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* ignore */ } }); S.stream = null; }
+    }
+
+    function stopRecording() {
+      clearInterval(S.recTimer); S.recTimer = null;
+      if (S.recorder && S.recorder.state !== 'inactive') { try { S.recorder.stop(); } catch (e) { /* ignore */ } }
+    }
+
+    function finishRecording(key) {
+      var duration = (performance.now() - S.recStart) / 1000;
+      releaseStream();
+      var sl = S.slots[key];
+      var type = (S.recorder && S.recorder.mimeType) || S.recMime || 'audio/webm';
+      var blob = new Blob(S.chunks, { type: type });
+      S.chunks = []; S.recorder = null;
+      if (!sl) return;
+      if (blob.size < 800 || duration < 1) {
+        sl.status = 'idle';
+        if (key === slotKey(S.q, S.part)) { renderRecorder(); setMsg('msg-area', 'err', 'The recording was too short or empty. Please try again and speak after pressing the button.', 'التسجيل قصير جداً أو فارغ. حاول مرة أخرى.'); }
+        return;
+      }
+      if (sl.url && sl.url.indexOf('blob:') === 0) { try { URL.revokeObjectURL(sl.url); } catch (e) { /* ignore */ } }
+      sl.status = 'recorded'; sl.blob = blob; sl.url = URL.createObjectURL(blob);
+      sl.duration = Math.round(duration * 10) / 10; sl.mime = type.split(';')[0] || 'audio/webm';
+      sl.recordedAt = new Date().toISOString(); sl.uploadKey = uuid();
+      if (key === slotKey(S.q, S.part)) { renderRecorder(); setMsg('msg-area', 'info', 'Listen to your answer. If you are happy, press Save. If not, delete it and record again.', 'استمع إلى إجابتك. إذا كنت راضياً اضغط حفظ، وإلا احذفها وسجّل من جديد.'); }
+    }
+
+    function onRedo() {
+      var sl = slot(S.q, S.part);
+      if (sl.status !== 'recorded') return;
+      if (sl.url) { try { URL.revokeObjectURL(sl.url); } catch (e) { /* ignore */ } }
+      S.slots[slotKey(S.q, S.part)] = { status: 'idle' };
+      setMsg('msg-area', '', '');
+      renderRecorder();
+    }
+
+    async function onSave() {
+      var q = S.q, p = S.part, sl = slot(q, p);
+      if (sl.status !== 'recorded') return;
+      sl.status = 'uploading'; renderRecorder();
+      setMsg('msg-area', 'info', 'Saving your answer… Please do not close this page.', 'جارٍ حفظ إجابتك… لا تغلق هذه الصفحة.');
+      try {
+        var b64 = await blobToBase64(sl.blob);
+        var res = await api('saveRecording', {
+          attemptId: S.attemptId, recoveryCode: S.code, question: q, part: p, uploadKey: sl.uploadKey,
+          mimeType: sl.mime, durationSec: sl.duration, recordedAt: sl.recordedAt, audioBase64: b64
+        }, { retries: 3, timeout: 120000 });
+        S.state = res.state;
+        sl.status = 'saved';
+        if (S.q === q) {
+          updateHeader(); renderQuestionStatic(); renderRecorder();
+          setMsg('msg-area', 'ok', 'Your answer is saved.', 'تم حفظ إجابتك.');
+        }
+      } catch (e) {
+        sl.status = 'recorded';
+        if (e.code === 'ALREADY_SAVED') {
+          try { var st = await api('getStatus', { attemptId: S.attemptId, recoveryCode: S.code }); S.state = st.state; sl.status = 'saved'; } catch (e4) { /* ignore */ }
+          if (S.q === q) { updateHeader(); renderQuestionStatic(); renderRecorder(); }
+          return;
+        }
+        if (e.code === 'INVALID_CREDENTIALS') { return credsLost(); }
+        if (S.q === q) {
+          renderRecorder();
+          var t = errText(e);
+          setMsg('msg-area', 'err', 'NOT saved yet. ' + t[0] + ' Your recording is still here – press Save again.', 'لم تُحفظ بعد. ' + t[1] + ' تسجيلك ما زال موجوداً – اضغط حفظ مرة أخرى.');
+        }
+      }
+    }
+
+    function onNext() {
+      var nb = $('next-btn'), mode = nb.dataset.mode;
+      if (mode === 'part') { S.part = Number(nb.dataset.part); renderQuestionStatic(); renderRecorder(); setMsg('msg-area', '', ''); }
+      else if (mode === 'question') { openQuestion(S.q + 1); }
+      else { showReview(); }
+    }
+
+    async function stopEverything() {
+      clearInterval(S.prepTimer); clearInterval(S.recTimer); S.prepTimer = null; S.recTimer = null;
+      if (S.recorder && S.recorder.state !== 'inactive') { S.recorder.onstop = null; try { S.recorder.stop(); } catch (e) { /* ignore */ } }
+      Object.keys(S.slots).forEach(function (k) { if (S.slots[k].status === 'recording') S.slots[k] = { status: 'idle' }; });
+      S.recorder = null; releaseStream();
+    }
+
+    /* ---------- review / submit / done ---------- */
+    function showReview() {
+      stopEverything();
+      showScreen('screen-review');
+      S.q = S.questions.length;
+      var rows = '<tr><th>Question</th><th>Status</th><th>Length</th></tr>';
+      S.questions.forEach(function (qq) {
+        var dur = 0, ok = true;
+        for (var p = 1; p <= qq.parts; p++) {
+          var r = S.state.recordings[slotKey(qq.id, p)];
+          if (r) dur += r.durationSec; else ok = false;
+        }
+        rows += '<tr><td>Question ' + qq.id + (qq.parts > 1 ? ' (' + qq.parts + ' answers)' : '') + '</td><td>' +
+          (ok ? '<span class="tick">✔ Saved</span>' : '<b style="color:#C0392B">Missing</b>') + '</td><td>' + (ok ? fmtTime(dur) : '–') + '</td></tr>';
+      });
+      $('summary-table').innerHTML = rows;
+      $('submit-msg').innerHTML = '';
+      var all = S.state.completedQuestions.length === S.questions.length;
+      $('submit-btn').disabled = !all;
+      if (!all) setMsg('submit-msg', 'warn', 'Some answers are missing. Go back and finish all questions.', 'بعض الإجابات ناقصة. ارجع وأكمل جميع الأسئلة.');
+    }
+
+    async function onSubmit() {
+      var btn = $('submit-btn');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Submitting…';
+      setMsg('submit-msg', '', '');
+      try {
+        var res = await api('submitExam', { attemptId: S.attemptId, recoveryCode: S.code }, { retries: 3 });
+        S.state = res.state;
+        showDone();
+      } catch (e) {
+        var t = errText(e); setMsg('submit-msg', 'err', t[0], t[1]);
+        btn.disabled = false; btn.innerHTML = 'Submit my examination <span class="ar">إرسال الاختبار</span>';
+      }
+    }
+
+    function showDone() {
+      stopEverything();
+      showScreen('screen-done');
+      show('who');
+      $('done-name').textContent = S.state.studentName;
+      $('done-time').textContent = S.state.submittedAt ? 'Submitted: ' + fmtDate(S.state.submittedAt) : '';
+      $('who-progress').textContent = 'Submitted ✔';
+    }
+
+    /* ---------- wire up ---------- */
+    $('start-form').addEventListener('submit', onStart);
+    $('resume-form').addEventListener('submit', onResume);
+    $('rec-btn').addEventListener('click', onRecButton);
+    $('redo-btn').addEventListener('click', onRedo);
+    $('save-btn').addEventListener('click', onSave);
+    $('next-btn').addEventListener('click', onNext);
+    $('submit-btn').addEventListener('click', onSubmit);
+    $('back-btn').addEventListener('click', function () { openQuestion(S.questions.length); });
+    $('code-btn').addEventListener('click', function () { showCodeModal(null); });
+    $('code-copy').addEventListener('click', function () {
+      var b = $('code-copy');
+      try { navigator.clipboard.writeText(S.code).then(function () { b.textContent = 'Copied ✔'; }, function () { b.textContent = 'Select and copy it'; }); }
+      catch (e) { b.textContent = 'Select and copy it'; }
+    });
+    $('pills').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-q]');
+      if (!b || b.disabled) return;
+      var q = Number(b.dataset.q);
+      if (hasUnsaved() && !window.confirm('You have a recording that is not saved. If you leave this question it will be lost. Leave anyway?')) return;
+      openQuestion(q);
+    });
+    $('parts').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-part]');
+      if (!b) return;
+      var cur = slot(S.q, S.part);
+      if (cur.status === 'recording' || cur.status === 'uploading') return;
+      S.part = Number(b.dataset.part);
+      renderQuestionStatic(); renderRecorder(); setMsg('msg-area', '', '');
+    });
+    window.addEventListener('beforeunload', function (ev) {
+      if (hasUnsaved()) { ev.preventDefault(); ev.returnValue = ''; }
+    });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden && S.state && S.q && S.prepTimer) tickPrep(); });
+
+    init();
+  }
+
+  /* ======================================================================
+   *  TEACHER APPLICATION
+   * ====================================================================== */
+  function teacherApp() {
+    var TOKEN_KEY = 'kimza_teacher_token_v1';
+    var T = { token: '', config: null, questions: [], list: [], current: null, marks: {}, audio: {}, dirty: false, busy: false };
+    var SCREENS = ['screen-loading', 'screen-login', 'screen-list', 'screen-attempt'];
+    function showScreen(id) { SCREENS.forEach(function (s) { hide(s); }); hide('boot-error'); show(id); window.scrollTo(0, 0); }
+    function ssGet() { try { return window.sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
+    function ssSet(v) { try { if (v) window.sessionStorage.setItem(TOKEN_KEY, v); else window.sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
+
+    function totalParts() { return T.questions.reduce(function (n, q) { return n + q.parts; }, 0); }
+
+    function toLogin(msg) {
+      T.token = ''; ssSet('');
+      showScreen('screen-login'); hide('t-who');
+      var er = $('login-error');
+      if (msg) { er.textContent = msg; show(er); } else { hide(er); }
+      $('t-password').value = '';
+    }
+
+    async function guarded(fn) {
+      try { return await fn(); }
+      catch (e) {
+        if (e.code === 'SESSION_EXPIRED') { toLogin('Your session has expired. Please log in again.'); return undefined; }
+        throw e;
+      }
+    }
+
+    async function init() {
+      try { T.config = await api('getConfig', {}); T.questions = T.config.questions; }
+      catch (e) { bootError('<b>' + esc(errText(e)[0]) + '</b><br><br><button class="btn" onclick="location.reload()">Try again</button>'); return; }
+      T.token = ssGet();
+      if (T.token) { await loadList(true); } else { toLogin(''); }
+    }
+
+    async function onLogin(ev) {
+      ev.preventDefault();
+      var er = $('login-error'); hide(er);
+      var btn = $('login-btn'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Checking…';
+      try {
+        var res = await api('teacherLogin', { password: $('t-password').value }, { retries: 1 });
+        T.token = res.token; ssSet(res.token); $('t-password').value = '';
+        await loadList(false);
+      } catch (e) { er.textContent = e.message; show(er); }
+      finally { btn.disabled = false; btn.textContent = 'Log in'; }
+    }
+
+    async function onLogout() {
+      try { await api('teacherLogout', { token: T.token }, { retries: 0 }); } catch (e) { /* ignore */ }
+      toLogin('');
+    }
+
+    /* ---------- list ---------- */
+    async function loadList(quiet) {
+      showScreen('screen-list'); show('t-who');
+      setMsg('list-msg', 'info', 'Loading attempts…');
+      try {
+        var res = await guarded(function () { return api('teacherListAttempts', { token: T.token }); });
+        if (!res) return;
+        T.list = res.attempts; setMsg('list-msg', '', '');
+        renderList();
+      } catch (e) { setMsg('list-msg', 'err', errText(e)[0]); }
+    }
+
+    function renderList() {
+      var counts = { total: T.list.length, needs: 0, graded: 0, prog: 0 };
+      T.list.forEach(function (a) { if (a.status === 'Submitted') counts.needs++; else if (a.status === 'Graded') counts.graded++; else counts.prog++; });
+      $('stats').innerHTML =
+        '<div class="stat"><b>' + counts.total + '</b>All attempts</div>' +
+        '<div class="stat"><b style="color:var(--orange-dark)">' + counts.needs + '</b>Need grading</div>' +
+        '<div class="stat"><b style="color:var(--green)">' + counts.graded + '</b>Graded</div>' +
+        '<div class="stat"><b>' + counts.prog + '</b>In progress</div>';
+      var term = $('search').value.trim().toLowerCase(), f = $('status-filter').value;
+      var rows = T.list.filter(function (a) {
+        if (term && a.studentName.toLowerCase().indexOf(term) === -1) return false;
+        if (f === 'needs') return a.status === 'Submitted';
+        if (f === 'Graded') return a.status === 'Graded';
+        if (f === 'InProgress') return a.status === 'InProgress';
+        return true;
+      });
+      var html = '';
+      rows.forEach(function (a) {
+        var label = a.status === 'Submitted' ? (a.gradedCount > 0 ? 'Partly graded' : 'Needs grading') : (a.status === 'Graded' ? 'Graded ✔' : 'In progress');
+        html += '<tr><td><b>' + esc(a.studentName) + '</b></td><td><span class="badge ' + esc(a.status) + '">' + esc(label) + '</span></td>' +
+          '<td class="hide-m">' + a.recordingCount + ' / ' + totalParts() + '</td><td class="hide-m">' + esc(fmtDate(a.startedAt)) + '</td>' +
+          '<td><b>' + (a.totalMark === null ? '–' : a.totalMark) + '</b> / ' + T.config.totalMarks + '</td>' +
+          '<td><button class="btn secondary" data-open="' + esc(a.attemptId) + '" style="min-height:40px;padding:8px 14px">' + (a.status === 'InProgress' ? 'View' : 'Open') + '</button></td></tr>';
+      });
+      $('attempts-body').innerHTML = html || '<tr><td colspan="6" class="muted" style="padding:24px;text-align:center">No attempts found.</td></tr>';
+    }
+
+    /* ---------- attempt ---------- */
+    async function openAttempt(id) {
+      showScreen('screen-loading'); show('t-who');
+      try {
+        var res = await guarded(function () { return api('teacherGetAttempt', { token: T.token, attemptId: id }); });
+        if (!res) return;
+        revokeAudio();
+        T.current = res; T.marks = {}; T.dirty = false;
+        for (var i = 1; i <= T.questions.length; i++) T.marks[i] = res.marks[String(i)];
+        renderAttempt();
+        showScreen('screen-attempt');
+      } catch (e) {
+        showScreen('screen-list'); setMsg('list-msg', 'err', errText(e)[0]);
+      }
+    }
+
+    function revokeAudio() {
+      Object.keys(T.audio).forEach(function (k) { try { URL.revokeObjectURL(T.audio[k]); } catch (e) { /* ignore */ } });
+      T.audio = {};
+    }
+
+    function renderAttempt() {
+      var a = T.current.attempt;
+      $('a-name').textContent = a.studentName;
+      $('a-meta').innerHTML = 'Started: ' + esc(fmtDate(a.startedAt)) + ' · Submitted: ' + esc(fmtDate(a.submittedAt)) + ' · Recovery code: <b>' + esc(T.current.recoveryCode) + '</b>';
+      var st = $('a-status'); st.className = 'badge ' + a.status; st.textContent = a.status === 'InProgress' ? 'In progress' : a.status;
+      var canGrade = a.status === 'Submitted' || a.status === 'Graded';
+      var html = '';
+      T.questions.forEach(function (q) {
+        var prompt = q.type === 'translate' ? '<div class="prompt ar" dir="rtl" lang="ar" style="font-size:22px;padding:12px">' + esc(q.promptAr) + '</div>'
+          : (q.type === 'speak' ? '<div class="prompt en" style="font-size:18px;padding:12px">' + esc(q.promptEn) + '<br><span class="small muted">' + q.requirements.map(esc).join(' · ') + '</span></div>'
+            : '<div class="story" style="font-size:16px">' + esc(q.story) + '</div>');
+        html += '<div class="qblock"><h3>Question ' + q.id + ' <span class="muted small">– ' + esc(q.title) + '</span></h3>' + prompt;
+        for (var p = 1; p <= q.parts; p++) {
+          var rec = T.current.recordings.filter(function (r) { return r.question === q.id && r.part === p; })[0];
+          var label = q.parts > 1 ? 'Answer ' + p + ': ' + esc(q.subQuestions[p - 1]) : 'Recording';
+          html += '<div class="recline" data-q="' + q.id + '" data-p="' + p + '"><div style="flex:1;min-width:220px"><b>' + label + '</b>' +
+            (rec ? '<div class="small muted">' + esc(fmtDate(rec.recordedAt)) + ' · ' + fmtTime(rec.durationSec) + ' · ' + esc(rec.mimeType) + '</div>' : '<div class="small muted">Not recorded</div>') + '</div>' +
+            (rec ? '<div class="audiobox"><button class="btn teal" data-load="' + q.id + '-' + p + '" style="min-height:42px;padding:8px 16px">▶ Load and play</button></div>' : '') + '</div>';
+        }
+        html += '<div class="markbox"><label for="mark-' + q.id + '" style="margin:0">Mark (0–5):</label><select id="mark-' + q.id + '" data-mark="' + q.id + '"' + (canGrade ? '' : ' disabled') + '><option value="">– not graded –</option>';
+        for (var m = 0; m <= 5; m++) html += '<option value="' + m + '">' + m + '</option>';
+        html += '</select></div></div>';
+      });
+      $('a-questions').innerHTML = html;
+      T.questions.forEach(function (q) { var v = T.marks[q.id]; $('mark-' + q.id).value = (v === null || v === undefined) ? '' : String(v); });
+      $('a-feedback').value = T.current.feedback || '';
+      $('a-feedback').disabled = !canGrade;
+      $('fb-count').textContent = $('a-feedback').value.length;
+      $('save-grade').disabled = !canGrade;
+      setMsg('save-msg', canGrade ? '' : 'warn', canGrade ? '' : 'Not submitted yet – grading is not possible.');
+      updateTotal();
+    }
+
+    function updateTotal() {
+      var total = 0, n = 0;
+      T.questions.forEach(function (q) { var v = T.marks[q.id]; if (v !== null && v !== undefined && v !== '') { total += Number(v); n++; } });
+      $('a-total').textContent = total;
+      $('a-graded-count').textContent = '(' + n + ' of ' + T.questions.length + ' questions graded)';
+    }
+
+    async function loadAudio(q, p, btn) {
+      var key = q + '-' + p;
+      var box = btn.parentNode;
+      if (T.audio[key]) { return; }
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Loading…';
+      try {
+        var res = await guarded(function () { return api('teacherGetAudio', { token: T.token, attemptId: T.current.attempt.attemptId, question: q, part: p }, { timeout: 90000 }); });
+        if (!res) return;
+        var blob = blobFromBase64(res.audioBase64, res.mimeType);
+        T.audio[key] = URL.createObjectURL(blob);
+        box.innerHTML = '<audio controls preload="auto" src="' + T.audio[key] + '" style="max-width:100%"></audio>';
+        var au = box.querySelector('audio'); var pr = au.play(); if (pr && pr.catch) pr.catch(function () { /* user presses play */ });
+      } catch (e) { btn.disabled = false; btn.textContent = '▶ Load and play'; setMsg('save-msg', 'err', errText(e)[0]); }
+    }
+
+    async function onSaveGrade() {
+      var btn = $('save-grade');
+      var marks = {};
+      T.questions.forEach(function (q) { var v = T.marks[q.id]; marks[String(q.id)] = (v === null || v === undefined || v === '') ? null : Number(v); });
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving…';
+      setMsg('save-msg', '', '');
+      try {
+        var res = await guarded(function () { return api('teacherSaveGrade', { token: T.token, attemptId: T.current.attempt.attemptId, marks: marks, feedback: $('a-feedback').value }, { retries: 2 }); });
+        if (!res) return;
+        T.current.attempt = res.attempt; T.dirty = false;
+        var st = $('a-status'); st.className = 'badge ' + res.attempt.status; st.textContent = res.attempt.status;
+        $('a-total').textContent = res.attempt.totalMark === null ? 0 : res.attempt.totalMark;
+        setMsg('save-msg', 'ok', res.attempt.status === 'Graded' ? 'Saved ✔ – fully graded' : 'Saved ✔ – some questions are still ungraded');
+      } catch (e) { setMsg('save-msg', 'err', 'NOT saved: ' + errText(e)[0]); }
+      finally { btn.disabled = false; btn.textContent = 'Save grading'; }
+    }
+
+    /* ---------- wire up ---------- */
+    $('login-form').addEventListener('submit', onLogin);
+    $('logout-btn').addEventListener('click', onLogout);
+    $('refresh-btn').addEventListener('click', function () { loadList(false); });
+    $('search').addEventListener('input', renderList);
+    $('status-filter').addEventListener('change', renderList);
+    $('clear-btn').addEventListener('click', function () { $('search').value = ''; $('status-filter').value = 'all'; renderList(); });
+    $('attempts-body').addEventListener('click', function (ev) { var b = ev.target.closest('button[data-open]'); if (b) openAttempt(b.dataset.open); });
+    $('back-list').addEventListener('click', function () {
+      if (T.dirty && !window.confirm('You have unsaved marks or feedback. Leave without saving?')) return;
+      revokeAudio(); loadList(false);
+    });
+    $('a-questions').addEventListener('change', function (ev) {
+      var s = ev.target.closest('select[data-mark]'); if (!s) return;
+      T.marks[Number(s.dataset.mark)] = s.value === '' ? null : Number(s.value);
+      T.dirty = true; updateTotal();
+    });
+    $('a-questions').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-load]'); if (!b) return;
+      var parts = b.dataset.load.split('-'); loadAudio(Number(parts[0]), Number(parts[1]), b);
+    });
+    $('a-feedback').addEventListener('input', function () { T.dirty = true; $('fb-count').textContent = $('a-feedback').value.length; });
+    $('save-grade').addEventListener('click', onSaveGrade);
+    window.addEventListener('beforeunload', function (ev) { if (T.dirty) { ev.preventDefault(); ev.returnValue = ''; } });
+
+    init();
+  }
+
+  /* ======================================================================
+   *  START
+   * ====================================================================== */
+  function start() {
+    var page = document.body.getAttribute('data-page');
+    if (page === 'teacher') teacherApp(); else studentApp();
+  }
+  if (!KIMZA_API_URL || KIMZA_API_URL.indexOf('PASTE_YOUR') === 0) {
+    bootError('<b>Not connected yet.</b><br>The Web App URL has not been pasted into JavaScript.html (line 10). See the deployment guide, step "Connect the website to the backend".');
+  } else {
+    start();
+  }
+})();

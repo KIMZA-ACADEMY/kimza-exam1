@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KIMZA Academy – Teacher Dashboard</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:,">
+<style>
+:root{
+  --cream:#FFF8EE; --card:#FFFFFF; --ink:#1F2A44; --muted:#5E6A85; --line:#EBDDC7;
+  --orange:#E8801A; --orange-dark:#C96A0C; --orange-soft:#FFE8C7;
+  --teal:#157A6E; --teal-soft:#DDF3EF; --red:#C0392B; --red-soft:#FBE4E1; --green:#1E8E4E; --green-soft:#DFF4E7;
+  --radius:16px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--cream);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Tahoma,Arial,sans-serif;font-size:17px;line-height:1.55}
+.hidden{display:none !important}
+.topbar{background:var(--card);border-bottom:3px solid var(--orange);position:sticky;top:0;z-index:20}
+.topbar-in{max-width:960px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
+.logo{width:42px;height:42px;border-radius:12px;background:var(--orange);color:#fff;font-weight:800;font-size:24px;display:grid;place-items:center;letter-spacing:-1px}
+.brand b{font-size:19px;display:block;line-height:1.1}
+.brand span{font-size:13px;color:var(--muted)}
+.who{margin-inline-start:auto;text-align:right;font-size:14px;color:var(--muted)}
+.who strong{display:block;color:var(--ink);font-size:16px}
+main{max-width:960px;margin:0 auto;padding:18px 16px 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:22px;margin-bottom:18px;box-shadow:0 2px 0 rgba(0,0,0,.03)}
+h1{font-size:28px;line-height:1.25;margin:0 0 6px}
+h2{font-size:22px;margin:0 0 8px}
+h3{font-size:18px;margin:18px 0 6px}
+p{margin:0 0 10px}
+.muted{color:var(--muted)}
+.ar{direction:rtl;text-align:right;font-family:"Segoe UI",Tahoma,"Noto Naskh Arabic","Noto Sans Arabic",Arial,sans-serif}
+.small{font-size:14px}
+label{display:block;font-weight:700;margin-bottom:6px}
+input[type=text],input[type=password],input[type=search],select,textarea{width:100%;font:inherit;padding:13px 14px;border:2px solid var(--line);border-radius:12px;background:#fff;color:var(--ink)}
+input:focus,select:focus,textarea:focus,button:focus-visible,a:focus-visible{outline:3px solid #F6B15F;outline-offset:2px}
+textarea{min-height:110px;resize:vertical}
+.btn{font:inherit;font-weight:700;border:0;border-radius:12px;padding:13px 22px;cursor:pointer;background:var(--orange);color:#fff;min-height:48px}
+.btn:hover:not(:disabled){background:var(--orange-dark)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.secondary{background:#fff;color:var(--ink);border:2px solid var(--line)}
+.btn.secondary:hover:not(:disabled){background:var(--orange-soft)}
+.btn.teal{background:var(--teal)} .btn.teal:hover:not(:disabled){background:#0F6157}
+.btn.danger{background:#fff;color:var(--red);border:2px solid #E7B4AE}
+.btn.big{padding:16px 28px;font-size:19px;min-height:58px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr} h1{font-size:24px} .who{width:100%;text-align:left;margin:0}}
+.msg{border-radius:12px;padding:12px 14px;margin:12px 0;font-weight:600}
+.msg.err{background:var(--red-soft);color:#8E2A20;border:1px solid #EDB9B3}
+.msg.ok{background:var(--green-soft);color:#14673A;border:1px solid #AEDDC0}
+.msg.info{background:var(--teal-soft);color:#0F5A51;border:1px solid #A9DCD5}
+.msg.warn{background:#FFF1CC;color:#7A5200;border:1px solid #F0D58A}
+.progress{height:12px;background:var(--orange-soft);border-radius:99px;overflow:hidden}
+.progress>i{display:block;height:100%;background:var(--teal);width:0;transition:width .3s}
+.pills{display:flex;gap:8px;margin:12px 0 4px;flex-wrap:wrap}
+.pill{min-width:46px;height:46px;border-radius:12px;border:2px solid var(--line);background:#fff;font:inherit;font-weight:800;cursor:pointer;color:var(--ink)}
+.pill.done{background:var(--teal-soft);border-color:var(--teal);color:#0F5A51}
+.pill.current{background:var(--orange);border-color:var(--orange);color:#fff}
+.pill:disabled{opacity:.4;cursor:not-allowed}
+.qno{display:inline-block;background:var(--orange-soft);color:var(--orange-dark);font-weight:800;border-radius:99px;padding:4px 14px;font-size:15px;margin-bottom:8px}
+.prompt{background:var(--cream);border:2px dashed var(--orange);border-radius:14px;padding:18px;margin:12px 0;font-size:26px;line-height:1.7}
+.prompt.en{font-size:21px;line-height:1.55}
+.story{background:#FFFDF7;border:1px solid var(--line);border-radius:14px;padding:16px;font-size:19px;line-height:1.7;margin:12px 0}
+.req{margin:8px 0;padding-inline-start:22px}
+.parts{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 4px}
+.parts .pill{min-width:auto;padding:0 14px;height:42px}
+.prep{display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:var(--orange-soft);border-radius:14px;padding:14px 18px;margin:14px 0}
+.prep .time{font-size:46px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--orange-dark);line-height:1}
+.prep.finished{background:var(--teal-soft)} .prep.finished .time{color:var(--teal)}
+.recorder{border:2px solid var(--line);border-radius:14px;padding:18px;margin-top:14px;text-align:center}
+.recbtn{width:100%;max-width:420px;min-height:78px;font-size:22px;border-radius:18px}
+.recbtn.recording{background:var(--red);animation:none}
+.recbtn.recording:hover:not(:disabled){background:#A52D21}
+.rectime{font-size:40px;font-weight:800;font-variant-numeric:tabular-nums;margin:10px 0 0}
+.dot{display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--red);margin-inline-end:8px;vertical-align:middle}
+audio{width:100%;max-width:520px;margin:12px 0}
+.spinner{display:inline-block;width:18px;height:18px;border:3px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:sp 0.9s linear infinite;vertical-align:-3px;margin-inline-end:8px}
+.dark .spinner,.spinner.dark{border-color:rgba(0,0,0,.2);border-top-color:var(--orange)}
+@keyframes sp{to{transform:rotate(360deg)}}
+.code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:34px;font-weight:800;letter-spacing:3px;background:var(--cream);border:2px dashed var(--teal);border-radius:12px;padding:12px 18px;display:inline-block;margin:10px 0;user-select:all}
+.modal{position:fixed;inset:0;background:rgba(31,42,68,.6);display:grid;place-items:center;padding:16px;z-index:50}
+.modal .card{max-width:560px;width:100%;margin:0;max-height:92vh;overflow:auto}
+.summary{width:100%;border-collapse:collapse;margin:10px 0}
+.summary td,.summary th{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left}
+.tick{color:var(--green);font-weight:800}
+.footer{max-width:960px;margin:0 auto;padding:0 16px 30px;color:var(--muted);font-size:13px;text-align:center}
+#boot-error{max-width:720px;margin:40px auto}
+.table{width:100%;border-collapse:collapse}
+.table th{text-align:left;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding:8px 10px;border-bottom:2px solid var(--line)}
+.table td{padding:12px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+.table tr:hover td{background:#FFFBF3}
+.badge{display:inline-block;border-radius:99px;padding:3px 12px;font-size:13px;font-weight:800}
+.badge.InProgress{background:#FFF1CC;color:#7A5200}
+.badge.Submitted{background:var(--orange-soft);color:var(--orange-dark)}
+.badge.Graded{background:var(--green-soft);color:#14673A}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;text-align:center}
+.stat b{display:block;font-size:30px;line-height:1.1}
+.filters{display:grid;grid-template-columns:2fr 1fr auto;gap:12px;margin-bottom:14px}
+@media(max-width:760px){.stats{grid-template-columns:1fr 1fr}.filters{grid-template-columns:1fr}.hide-m{display:none}}
+.qblock{border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;background:#fff}
+.qblock h3{margin-top:0}
+.markbox{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.markbox select{width:auto;min-width:110px}
+.recline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0;padding:8px 0;border-top:1px dashed var(--line)}
+.total{font-size:30px;font-weight:800;color:var(--teal)}
+.sticky-save{position:sticky;bottom:0;background:rgba(255,248,238,.96);padding:12px 0;border-top:2px solid var(--orange);z-index:10}
+</style>
+</head>
+<body data-page="teacher">
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand"><div class="logo" aria-hidden="true">K</div><div><b>KIMZA Academy</b><span>Teacher Dashboard</span></div></div>
+    <div class="who hidden" id="t-who"><button class="btn secondary" id="logout-btn" type="button" style="min-height:40px;padding:8px 14px">Log out</button></div>
+  </div>
+</header>
+
+<main>
+  <div id="boot-error" class="card hidden"></div>
+
+  <section id="screen-loading" class="card" style="text-align:center">
+    <p><span class="spinner dark"></span> Loading…</p>
+  </section>
+
+  <!-- Login -->
+  <section id="screen-login" class="hidden">
+    <div class="card" style="max-width:480px;margin:30px auto">
+      <h1>Teacher login</h1>
+      <p class="muted">Enter the teacher password to see the examinations.</p>
+      <form id="login-form" autocomplete="off">
+        <label for="t-password">Password</label>
+        <input type="password" id="t-password" autocomplete="current-password" required>
+        <div id="login-error" class="msg err hidden" role="alert"></div>
+        <div class="row" style="margin-top:14px"><button class="btn big" type="submit" id="login-btn">Log in</button></div>
+      </form>
+    </div>
+  </section>
+
+  <!-- List -->
+  <section id="screen-list" class="hidden">
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><h1 style="margin:0">Examination attempts</h1>
+        <button class="btn secondary" id="refresh-btn" type="button">↻ Refresh</button></div>
+      <div class="stats" id="stats" style="margin-top:14px"></div>
+      <div class="filters">
+        <div><label for="search">Search by student name</label><input type="search" id="search" placeholder="Type a name…"></div>
+        <div><label for="status-filter">Status</label>
+          <select id="status-filter">
+            <option value="all">All</option>
+            <option value="needs">Submitted – needs grading</option>
+            <option value="Graded">Graded (completed)</option>
+            <option value="InProgress">In progress</option>
+          </select></div>
+        <div style="align-self:end"><button class="btn secondary" id="clear-btn" type="button">Clear</button></div>
+      </div>
+      <div id="list-msg" aria-live="polite"></div>
+      <div style="overflow-x:auto">
+        <table class="table" id="attempts-table">
+          <thead><tr><th>Student</th><th>Status</th><th class="hide-m">Answers</th><th class="hide-m">Started</th><th>Mark</th><th></th></tr></thead>
+          <tbody id="attempts-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Attempt -->
+  <section id="screen-attempt" class="hidden">
+    <div class="card">
+      <button class="btn secondary" id="back-list" type="button" style="margin-bottom:12px">← All attempts</button>
+      <div class="row" style="justify-content:space-between">
+        <div><h1 style="margin:0" id="a-name"></h1>
+          <div class="muted small" id="a-meta"></div></div>
+        <div><span class="badge" id="a-status"></span></div>
+      </div>
+    </div>
+    <div id="a-questions"></div>
+    <div class="card">
+      <label for="a-feedback">Written feedback for the student</label>
+      <textarea id="a-feedback" maxlength="3000"></textarea>
+      <div class="small muted"><span id="fb-count">0</span>/3000</div>
+    </div>
+    <div class="sticky-save">
+      <div class="row" style="justify-content:space-between;max-width:960px;margin:0 auto;padding:0 4px">
+        <div>Total: <span class="total" id="a-total">0</span> <b>/ 35</b> <span class="muted small" id="a-graded-count"></span></div>
+        <div class="row"><span id="save-msg" aria-live="polite"></span><button class="btn big teal" id="save-grade" type="button">Save grading</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  var APP_FILE_VERSION = '1.0.0';
+  function fail(msg) {
+    var box = document.getElementById('boot-error');
+    document.getElementById('screen-loading').className = 'hidden';
+    box.className = 'card msg err';
+    box.textContent = msg;
+  }
+  fetch('JavaScript.html?v=' + APP_FILE_VERSION, { cache: 'no-cache' })
+    .then(function (r) { if (!r.ok) { throw new Error('HTTP ' + r.status); } return r.text(); })
+    .then(function (code) {
+      var s = document.createElement('script');
+      s.textContent = code;
+      document.body.appendChild(s);
+    })
+    .catch(function (e) { fail('The page could not load its program file (JavaScript.html). Please check your internet connection and refresh. (' + e.message + ')'); });
+})();
+</script>
+</body>
+</html>
