@@ -138,7 +138,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       q: 0, part: 1, slots: {},
       prepTimer: null, recTimer: null,
       stream: null, recorder: null, chunks: [], recStart: 0, recKey: '', recMime: '',
-      busy: false
+      busy: false, auto: false, autoBusy: false, recLimit: 0, gapTimer: null
     };
     var SCREENS = ['screen-loading', 'screen-welcome', 'screen-exam', 'screen-review', 'screen-done'];
     function showScreen(id) { SCREENS.forEach(function (s) { hide(s); }); hide('boot-error'); show(id); window.scrollTo(0, 0); }
@@ -161,6 +161,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       try {
         S.config = await api('getConfig', {});
         S.questions = S.config.questions;
+        S.auto = !!S.config.autoMode;
       } catch (e) {
         var t = errText(e);
         bootError('<b>' + esc(t[0]) + '</b><br><br><button class="btn" onclick="location.reload()">Try again</button>');
@@ -236,12 +237,37 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       $('who-name').textContent = state.studentName;
       if (state.status !== 'InProgress') { showDone(); return; }
       if (isNew) {
-        showCodeModal(function () { openQuestion(state.nextQuestion); });
+        showCodeModal(function () { beginFlow(state.nextQuestion); });
       } else if (state.nextQuestion > S.questions.length) {
         showReview();
       } else {
-        openQuestion(state.nextQuestion);
+        beginFlow(state.nextQuestion);
       }
+    }
+
+    /* hands-free mode: a button press (user gesture) is needed to switch the microphone on */
+    function beginFlow(q) {
+      if (!S.auto) { openQuestion(q); return; }
+      setMsg('mic-msg', '', '');
+      show('mic-modal');
+      $('mic-go').onclick = async function () {
+        var b = $('mic-go'); b.disabled = true;
+        var ok = await acquireMic('mic-msg');
+        b.disabled = false;
+        if (ok) { hide('mic-modal'); openQuestion(q); }
+      };
+    }
+
+    async function acquireMic(msgEl) {
+      if (S.stream && S.stream.getTracks().some(function (t) { return t.readyState === 'live'; })) return true;
+      if (!window.isSecureContext) { setMsg(msgEl, 'err', 'Recording needs a secure (https) website address.', 'التسجيل يحتاج إلى عنوان موقع آمن (https).'); return false; }
+      if (!supportsRecording()) {
+        setMsg(msgEl, 'err', 'Your browser cannot record audio. Please use the newest Chrome, Edge, Firefox, or Safari (iPhone: Safari 14.3 or newer).',
+          'متصفحك لا يدعم تسجيل الصوت. استخدم أحدث إصدار من Chrome أو Edge أو Firefox أو Safari.');
+        return false;
+      }
+      try { S.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); return true; }
+      catch (e) { var t = micError(e); setMsg(msgEl, 'err', t[0], t[1]); return false; }
     }
 
     function showCodeModal(onOk) {
@@ -260,7 +286,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       var html = '';
       for (var i = 1; i <= total; i++) {
         var cls = 'pill' + (questionDone(i) ? ' done' : '') + (i === S.q ? ' current' : '');
-        var locked = i > nextQ();
+        var locked = S.auto ? (i !== S.q) : (i > nextQ());
         html += '<button type="button" class="' + cls + '" data-q="' + i + '"' + (locked ? ' disabled' : '') +
           ' aria-label="Question ' + i + (questionDone(i) ? ' (saved)' : '') + '"' + (i === S.q ? ' aria-current="step"' : '') + '>' + (questionDone(i) && i !== S.q ? '✓ ' : '') + i + '</button>';
       }
@@ -271,7 +297,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
     async function openQuestion(q) {
       if (q > S.questions.length) { showReview(); return; }
       await stopEverything();
-      S.q = q;
+      S.q = q; S.autoBusy = false;
       var qq = Q(q);
       S.part = 1;
       for (var p = 1; p <= qq.parts; p++) { if (!isSaved(q, p)) { S.part = p; break; } }
@@ -356,18 +382,19 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
         prep.classList.remove('finished');
         $('prep-time').textContent = fmtTime(rem);
         $('prep-title').textContent = 'Preparation time – get ready';
-        $('prep-help').textContent = 'The recording button opens when the timer reaches 0:00.';
-        $('prep-help-ar').textContent = 'سيُفتح زر التسجيل عندما يصل المؤقت إلى 0:00.';
+        $('prep-help').textContent = S.auto ? 'Your recording will START AUTOMATICALLY when the timer reaches 0:00. Start speaking at once.' : 'The recording button opens when the timer reaches 0:00.';
+        $('prep-help-ar').textContent = S.auto ? 'سيبدأ التسجيل تلقائياً عندما يصل المؤقت إلى 0:00. ابدأ الكلام فوراً.' : 'سيُفتح زر التسجيل عندما يصل المؤقت إلى 0:00.';
         if ($('rec-btn').dataset.prep !== '1') { $('rec-btn').dataset.prep = '1'; renderRecorder(); }
       } else {
         prep.classList.add('finished');
         $('prep-time').textContent = '0:00';
-        $('prep-title').textContent = 'Time is up – you can record now';
-        $('prep-help').textContent = 'Press the big button to start recording.';
-        $('prep-help-ar').textContent = 'اضغط على الزر الكبير لبدء التسجيل.';
+        $('prep-title').textContent = S.auto ? 'Time is up – recording starts now' : 'Time is up – you can record now';
+        $('prep-help').textContent = S.auto ? 'Please wait a moment…' : 'Press the big button to start recording.';
+        $('prep-help-ar').textContent = S.auto ? 'انتظر لحظة…' : 'اضغط على الزر الكبير لبدء التسجيل.';
         if ($('rec-btn').dataset.prep === '1') { $('rec-btn').dataset.prep = '0'; renderRecorder(); }
         clearInterval(S.prepTimer);
         S.prepTimer = null;
+        if (S.auto) { autoBegin(); }
       }
     }
 
@@ -377,6 +404,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       var saved = isSaved(q, p);
       var prepDone = prepRemaining(q) <= 0;
       var btn = $('rec-btn');
+      if (S.auto) { renderAuto(); return; }
       hide('playback'); hide('saved-box'); hide('rec-timer'); show('rec-idle-area');
       $('rec-limit').textContent = 'Maximum recording time: ' + fmtTime(qq.maxRecordSeconds) + '.';
       show('rec-limit');
@@ -412,6 +440,71 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       } else {
         btn.disabled = !prepDone;
         btn.innerHTML = '● Start recording <span class="ar">ابدأ التسجيل</span>';
+      }
+    }
+
+    function renderAuto() {
+      var q = S.q, p = S.part, sl = slot(q, p), btn = $('rec-btn');
+      btn.dataset.prep = prepRemaining(q) <= 0 ? '0' : '1';
+      hide('playback'); hide('saved-box'); hide('rec-limit'); hide('next-btn');
+      $('rec-label').textContent = 'Answer time left: ';
+      if (sl.status === 'recording') {
+        hide('prep'); show('rec-idle-area'); btn.disabled = false; btn.classList.add('recording');
+        btn.innerHTML = '■ Finish my answer early <span class="ar">إنهاء الإجابة</span>'; show('rec-timer');
+      } else {
+        hide('rec-idle-area'); hide('rec-timer'); btn.classList.remove('recording');
+        if (prepRemaining(q) <= 0) hide('prep');
+      }
+    }
+
+    async function autoBegin() {
+      if (!S.auto || S.autoBusy) return;
+      var q = S.q, p = S.part, sl = slot(q, p);
+      if (isSaved(q, p) || sl.status !== 'idle') return;
+      S.autoBusy = true;
+      setMsg('msg-area', 'info', 'Recording is starting… start speaking now.', 'التسجيل يبدأ… ابدأ الكلام الآن.');
+      var res;
+      try { res = await api('beginAnswer', { attemptId: S.attemptId, recoveryCode: S.code, question: q, part: p }); }
+      catch (e) { S.autoBusy = false; if (e.code === 'INVALID_CREDENTIALS') { return credsLost(); } autoRetry(errText(e)); return; }
+      if (S.q !== q || S.part !== p) { S.autoBusy = false; return; }
+      S.state = res.state;
+      if (res.alreadySaved || res.missed) {
+        S.autoBusy = false; updateHeader(); renderQuestionStatic();
+        setMsg('msg-area', 'warn', res.missed ? 'The answer time for this part had already ended, so it was recorded as "no answer". Moving on…' : 'This answer was already saved. Moving on…', res.missed ? 'انتهى وقت الإجابة، تم تسجيلها «بدون إجابة». ننتقل إلى التالي…' : 'تم حفظ هذه الإجابة سابقاً.');
+        setTimeout(autoAdvance, 2000); return;
+      }
+      var ok = await startRecorder(res.remainingSec);
+      S.autoBusy = false;
+      if (ok) { setMsg('msg-area', '', ''); }
+      else { autoRetry(['The microphone could not start. Press the button to try again – your answer time is still running.', 'تعذّر تشغيل الميكروفون. اضغط الزر للمحاولة مرة أخرى – وقت إجابتك ما زال يمضي.']); }
+    }
+
+    function autoRetry(t) {
+      setMsg('msg-area', 'err', t[0], t[1]);
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'btn big'; b.textContent = '🎤 Try again / حاول مرة أخرى';
+      b.onclick = function () { S.autoBusy = false; autoBegin(); };
+      $('msg-area').appendChild(b);
+    }
+
+    function gap(seconds, text, fn) {
+      clearInterval(S.gapTimer);
+      var left = seconds;
+      function paint() { setMsg('msg-area', 'ok', 'Answer saved ✔ ' + text + ' ' + left + '…', 'تم حفظ الإجابة ✔'); }
+      paint();
+      S.gapTimer = setInterval(function () { left--; if (left <= 0) { clearInterval(S.gapTimer); S.gapTimer = null; fn(); } else paint(); }, 1000);
+    }
+
+    function autoAdvance() {
+      var qq = Q(S.q), nextPart = 0;
+      for (var p = 1; p <= qq.parts; p++) { if (!isSaved(S.q, p)) { nextPart = p; break; } }
+      if (nextPart) {
+        gap(3, 'Next answer starts in', function () { S.part = nextPart; setMsg('msg-area', '', ''); renderQuestionStatic(); renderRecorder(); autoBegin(); });
+      } else if (S.q < S.questions.length) {
+        var nq = S.q + 1;
+        gap(2, 'Next question starts in', function () { openQuestion(nq); });
+      } else {
+        showReview();
+        if (S.state.completedQuestions.length === S.questions.length) onSubmit();
       }
     }
 
@@ -465,45 +558,43 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
     async function onRecButton() {
       var sl = slot(S.q, S.part);
       if (sl.status === 'recording') { stopRecording(); return; }
+      if (S.auto) return;
       if (prepRemaining(S.q) > 0) return;
       setMsg('msg-area', '', '');
-      if (!window.isSecureContext) {
-        setMsg('msg-area', 'err', 'Recording needs a secure (https) website address.', 'التسجيل يحتاج إلى عنوان موقع آمن (https).'); return;
-      }
-      if (!supportsRecording()) {
-        setMsg('msg-area', 'err', 'Your browser cannot record audio. Please use the newest Chrome, Edge, Firefox, or Safari (iPhone: Safari 14.3 or newer).',
-          'متصفحك لا يدعم تسجيل الصوت. استخدم أحدث إصدار من Chrome أو Edge أو Firefox أو Safari.'); return;
-      }
       var btn = $('rec-btn'); btn.disabled = true;
-      try {
-        S.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-      } catch (e) {
-        var t = micError(e); setMsg('msg-area', 'err', t[0], t[1]); btn.disabled = false; return;
-      }
+      var ok = await startRecorder(Q(S.q).maxRecordSeconds);
+      if (!ok) btn.disabled = false;
+    }
+
+    /* starts MediaRecorder for the current question/part; in hands-free mode the timer counts DOWN */
+    async function startRecorder(limitSec) {
+      if (!(await acquireMic('msg-area'))) return false;
       var mime = pickMime(), rec;
       try { rec = mime ? new MediaRecorder(S.stream, { mimeType: mime, audioBitsPerSecond: 32000 }) : new MediaRecorder(S.stream); }
       catch (e2) {
         try { rec = new MediaRecorder(S.stream); } catch (e3) {
-          releaseStream(); setMsg('msg-area', 'err', 'Your browser cannot record audio in this mode.', 'متصفحك لا يستطيع تسجيل الصوت.'); btn.disabled = false; return;
+          releaseStream(); setMsg('msg-area', 'err', 'Your browser cannot record audio in this mode.', 'متصفحك لا يستطيع تسجيل الصوت.'); return false;
         }
       }
-      S.recorder = rec; S.chunks = []; S.recMime = rec.mimeType || mime || '';
+      S.recorder = rec; S.chunks = []; S.recMime = rec.mimeType || mime || ''; S.recLimit = limitSec;
       S.recKey = slotKey(S.q, S.part);
-      var key = S.recKey, qq = Q(S.q);
+      var key = S.recKey;
       rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) S.chunks.push(ev.data); };
-      rec.onerror = function () { setMsg('msg-area', 'err', 'The recording stopped because of an error. Please record again.', 'توقف التسجيل بسبب خطأ. سجّل مرة أخرى.'); };
+      rec.onerror = function () { setMsg('msg-area', 'err', 'The recording stopped because of an error.', 'توقف التسجيل بسبب خطأ.'); };
       rec.onstop = function () { finishRecording(key); };
       S.recStart = performance.now();
       rec.start(1000);
       slot(S.q, S.part).status = 'recording';
-      $('rec-time').textContent = '0:00';
+      $('rec-label').textContent = S.auto ? 'Answer time left: ' : '';
+      $('rec-time').textContent = S.auto ? fmtTime(limitSec) : '0:00';
       clearInterval(S.recTimer);
       S.recTimer = setInterval(function () {
         var el = (performance.now() - S.recStart) / 1000;
-        $('rec-time').textContent = fmtTime(Math.floor(el));
-        if (el >= qq.maxRecordSeconds) { stopRecording(); }
+        $('rec-time').textContent = S.auto ? fmtTime(Math.max(0, limitSec - el)) : fmtTime(Math.floor(el));
+        if (el >= limitSec) { stopRecording(); }
       }, 250);
       renderRecorder();
+      return true;
     }
 
     function releaseStream() {
@@ -517,7 +608,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
 
     function finishRecording(key) {
       var duration = (performance.now() - S.recStart) / 1000;
-      releaseStream();
+      if (!S.auto) releaseStream();
       var sl = S.slots[key];
       var type = (S.recorder && S.recorder.mimeType) || S.recMime || 'audio/webm';
       var blob = new Blob(S.chunks, { type: type });
@@ -525,6 +616,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       if (!sl) return;
       if (blob.size < 800 || duration < 1) {
         sl.status = 'idle';
+        if (S.auto) { renderRecorder(); autoRetry(['The recording was empty or too short. Press the button to try again.', 'التسجيل فارغ أو قصير جداً. اضغط الزر للمحاولة مرة أخرى.']); return; }
         if (key === slotKey(S.q, S.part)) { renderRecorder(); setMsg('msg-area', 'err', 'The recording was too short or empty. Please try again and speak after pressing the button.', 'التسجيل قصير جداً أو فارغ. حاول مرة أخرى.'); }
         return;
       }
@@ -532,6 +624,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       sl.status = 'recorded'; sl.blob = blob; sl.url = URL.createObjectURL(blob);
       sl.duration = Math.round(duration * 10) / 10; sl.mime = type.split(';')[0] || 'audio/webm';
       sl.recordedAt = new Date().toISOString(); sl.uploadKey = uuid();
+      if (S.auto) { renderRecorder(); onSave(); return; }
       if (key === slotKey(S.q, S.part)) { renderRecorder(); setMsg('msg-area', 'info', 'Listen to your answer. If you are happy, press Save. If not, delete it and record again.', 'استمع إلى إجابتك. إذا كنت راضياً اضغط حفظ، وإلا احذفها وسجّل من جديد.'); }
     }
 
@@ -560,6 +653,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
         if (S.q === q) {
           updateHeader(); renderQuestionStatic(); renderRecorder();
           setMsg('msg-area', 'ok', 'Your answer is saved.', 'تم حفظ إجابتك.');
+          if (S.auto) autoAdvance();
         }
       } catch (e) {
         sl.status = 'recorded';
@@ -573,6 +667,10 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
           renderRecorder();
           var t = errText(e);
           setMsg('msg-area', 'err', 'NOT saved yet. ' + t[0] + ' Your recording is still here – press Save again.', 'لم تُحفظ بعد. ' + t[1] + ' تسجيلك ما زال موجوداً – اضغط حفظ مرة أخرى.');
+          if (S.auto) {
+            var rb = document.createElement('button'); rb.type = 'button'; rb.className = 'btn big teal'; rb.textContent = '↻ Try saving again / حاول الحفظ مرة أخرى';
+            rb.onclick = onSave; $('msg-area').appendChild(rb);
+          }
         }
       }
     }
@@ -588,7 +686,8 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       clearInterval(S.prepTimer); clearInterval(S.recTimer); S.prepTimer = null; S.recTimer = null;
       if (S.recorder && S.recorder.state !== 'inactive') { S.recorder.onstop = null; try { S.recorder.stop(); } catch (e) { /* ignore */ } }
       Object.keys(S.slots).forEach(function (k) { if (S.slots[k].status === 'recording') S.slots[k] = { status: 'idle' }; });
-      S.recorder = null; releaseStream();
+      clearInterval(S.gapTimer); S.gapTimer = null;
+      S.recorder = null; if (!S.auto) releaseStream();
     }
 
     /* ---------- review / submit / done ---------- */
@@ -598,13 +697,13 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       S.q = S.questions.length;
       var rows = '<tr><th>Question</th><th>Status</th><th>Length</th></tr>';
       S.questions.forEach(function (qq) {
-        var dur = 0, ok = true;
+        var dur = 0, ok = true, miss = false;
         for (var p = 1; p <= qq.parts; p++) {
           var r = S.state.recordings[slotKey(qq.id, p)];
-          if (r) dur += r.durationSec; else ok = false;
+          if (r) { dur += r.durationSec; if (r.mimeType === 'none') miss = true; } else ok = false;
         }
         rows += '<tr><td>Question ' + qq.id + (qq.parts > 1 ? ' (' + qq.parts + ' answers)' : '') + '</td><td>' +
-          (ok ? '<span class="tick">✔ Saved</span>' : '<b style="color:#C0392B">Missing</b>') + '</td><td>' + (ok ? fmtTime(dur) : '–') + '</td></tr>';
+          (ok ? (miss ? '<span style="color:#7A5200">⚠ Part: no answer (time ended)</span>' : '<span class="tick">✔ Saved</span>') : '<b style="color:#C0392B">Missing</b>') + '</td><td>' + (ok ? fmtTime(dur) : '–') + '</td></tr>';
       });
       $('summary-table').innerHTML = rows;
       $('submit-msg').innerHTML = '';
@@ -628,7 +727,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
     }
 
     function showDone() {
-      stopEverything();
+      stopEverything(); releaseStream();
       showScreen('screen-done');
       show('who');
       $('done-name').textContent = S.state.studentName;
@@ -803,8 +902,8 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
           var rec = T.current.recordings.filter(function (r) { return r.question === q.id && r.part === p; })[0];
           var label = q.parts > 1 ? 'Answer ' + p + ': ' + esc(q.subQuestions[p - 1]) : 'Recording';
           html += '<div class="recline" data-q="' + q.id + '" data-p="' + p + '"><div style="flex:1;min-width:220px"><b>' + label + '</b>' +
-            (rec ? '<div class="small muted">' + esc(fmtDate(rec.recordedAt)) + ' · ' + fmtTime(rec.durationSec) + ' · ' + esc(rec.mimeType) + '</div>' : '<div class="small muted">Not recorded</div>') + '</div>' +
-            (rec ? '<div class="audiobox"><button class="btn teal" data-load="' + q.id + '-' + p + '" style="min-height:42px;padding:8px 16px">▶ Load and play</button></div>' : '') + '</div>';
+            (rec && rec.mimeType === 'none' ? '<div class="small" style="color:#C0392B"><b>No answer recorded (answer time ended)</b></div>' : rec ? '<div class="small muted">' + esc(fmtDate(rec.recordedAt)) + ' · ' + fmtTime(rec.durationSec) + ' · ' + esc(rec.mimeType) + '</div>' : '<div class="small muted">Not recorded</div>') + '</div>' +
+            ((rec && rec.mimeType !== 'none') ? '<div class="audiobox"><button class="btn teal" data-load="' + q.id + '-' + p + '" style="min-height:42px;padding:8px 16px">▶ Load and play</button></div>' : '') + '</div>';
         }
         html += '<div class="markbox"><label for="mark-' + q.id + '" style="margin:0">Mark (0–5):</label><select id="mark-' + q.id + '" data-mark="' + q.id + '"' + (canGrade ? '' : ' disabled') + '><option value="">– not graded –</option>';
         for (var m = 0; m <= 5; m++) html += '<option value="' + m + '">' + m + '</option>';
