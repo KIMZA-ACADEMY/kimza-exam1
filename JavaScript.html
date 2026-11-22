@@ -5,7 +5,7 @@
  *
  *  >>> THE ONLY VALUE YOU MUST CHANGE IS THE NEXT LINE <<<
  * ============================================================================ */
-var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtfVY2ON099nv0LvLFzJDDmsDQtFIQf5CxGq6U9jKSDcrBMexg/exec';   // e.g. https://script.google.com/macros/s/AKfycb.../exec
+var KIMZA_API_URL = 'PASTE_YOUR_WEB_APP_URL_HERE';   // e.g. https://script.google.com/macros/s/AKfycb.../exec
 
 (function () {
   'use strict';
@@ -138,7 +138,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       q: 0, part: 1, slots: {},
       prepTimer: null, recTimer: null,
       stream: null, recorder: null, chunks: [], recStart: 0, recKey: '', recMime: '',
-      busy: false, auto: false, autoBusy: false, recLimit: 0, gapTimer: null
+      busy: false, auto: false, autoBusy: false, recLimit: 0, gapTimer: null, startMode: 'auto', winTimer: null, windowOpen: false, answerEnd: 0
     };
     var SCREENS = ['screen-loading', 'screen-welcome', 'screen-exam', 'screen-review', 'screen-done'];
     function showScreen(id) { SCREENS.forEach(function (s) { hide(s); }); hide('boot-error'); show(id); window.scrollTo(0, 0); }
@@ -161,7 +161,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       try {
         S.config = await api('getConfig', {});
         S.questions = S.config.questions;
-        S.auto = !!S.config.autoMode;
+        S.auto = !!S.config.autoMode; S.startMode = S.config.startMode || 'auto';
       } catch (e) {
         var t = errText(e);
         bootError('<b>' + esc(t[0]) + '</b><br><br><button class="btn" onclick="location.reload()">Try again</button>');
@@ -249,6 +249,10 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
     function beginFlow(q) {
       if (!S.auto) { openQuestion(q); return; }
       setMsg('mic-msg', '', '');
+      if (S.startMode === 'button') {
+        $('mic-p-en').innerHTML = 'The exam runs <b>on a timer</b>: preparation time → then your ANSWER TIME starts. When your answer time starts, press <b>Start recording</b> yourself. If you do not press it before the time ends, that question will have no answer.';
+        $('mic-p-ar').innerHTML = 'يعمل الاختبار <b>بمؤقت</b>: وقت التحضير ← ثم يبدأ وقت الإجابة. عندما يبدأ وقت الإجابة اضغط <b>«ابدأ التسجيل»</b> بنفسك. إذا لم تضغط قبل انتهاء الوقت فلن تُسجَّل إجابة لهذا السؤال.';
+      }
       show('mic-modal');
       $('mic-go').onclick = async function () {
         var b = $('mic-go'); b.disabled = true;
@@ -382,13 +386,13 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
         prep.classList.remove('finished');
         $('prep-time').textContent = fmtTime(rem);
         $('prep-title').textContent = 'Preparation time – get ready';
-        $('prep-help').textContent = S.auto ? 'Your recording will START AUTOMATICALLY when the timer reaches 0:00. Start speaking at once.' : 'The recording button opens when the timer reaches 0:00.';
-        $('prep-help-ar').textContent = S.auto ? 'سيبدأ التسجيل تلقائياً عندما يصل المؤقت إلى 0:00. ابدأ الكلام فوراً.' : 'سيُفتح زر التسجيل عندما يصل المؤقت إلى 0:00.';
+        $('prep-help').textContent = S.auto ? (S.startMode === 'button' ? 'When the timer reaches 0:00 your ANSWER TIME starts. Press “Start recording” yourself.' : 'Your recording will START AUTOMATICALLY when the timer reaches 0:00. Start speaking at once.') : 'The recording button opens when the timer reaches 0:00.';
+        $('prep-help-ar').textContent = S.auto ? (S.startMode === 'button' ? 'عندما يصل المؤقت إلى 0:00 يبدأ وقت الإجابة. اضغط «ابدأ التسجيل» بنفسك.' : 'سيبدأ التسجيل تلقائياً عندما يصل المؤقت إلى 0:00. ابدأ الكلام فوراً.') : 'سيُفتح زر التسجيل عندما يصل المؤقت إلى 0:00.';
         if ($('rec-btn').dataset.prep !== '1') { $('rec-btn').dataset.prep = '1'; renderRecorder(); }
       } else {
         prep.classList.add('finished');
         $('prep-time').textContent = '0:00';
-        $('prep-title').textContent = S.auto ? 'Time is up – recording starts now' : 'Time is up – you can record now';
+        $('prep-title').textContent = S.auto ? (S.startMode === 'button' ? 'Answer time is running' : 'Time is up – recording starts now') : 'Time is up – you can record now';
         $('prep-help').textContent = S.auto ? 'Please wait a moment…' : 'Press the big button to start recording.';
         $('prep-help-ar').textContent = S.auto ? 'انتظر لحظة…' : 'اضغط على الزر الكبير لبدء التسجيل.';
         if ($('rec-btn').dataset.prep === '1') { $('rec-btn').dataset.prep = '0'; renderRecorder(); }
@@ -449,11 +453,33 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       hide('playback'); hide('saved-box'); hide('rec-limit'); hide('next-btn');
       $('rec-label').textContent = 'Answer time left: ';
       if (sl.status === 'recording') {
-        hide('prep'); show('rec-idle-area'); btn.disabled = false; btn.classList.add('recording');
+        hide('prep'); show('rec-idle-area'); btn.disabled = false; btn.classList.add('recording'); document.querySelector('#rec-timer .dot').style.visibility = 'visible';
         btn.innerHTML = '■ Finish my answer early <span class="ar">إنهاء الإجابة</span>'; show('rec-timer');
+      } else if (S.windowOpen && sl.status === 'idle') {
+        hide('prep'); show('rec-idle-area'); btn.disabled = false; btn.classList.remove('recording');
+        btn.innerHTML = '● Start recording <span class="ar">ابدأ التسجيل</span>'; show('rec-timer');
+        document.querySelector('#rec-timer .dot').style.visibility = 'hidden';
       } else {
         hide('rec-idle-area'); hide('rec-timer'); btn.classList.remove('recording');
         if (prepRemaining(q) <= 0) hide('prep');
+      }
+    }
+
+    /* 'button' mode: the answer time is running; the student decides when to press Start recording */
+    function openWindow(sec) {
+      S.answerEnd = serverNow() + sec * 1000; S.windowOpen = true;
+      $('rec-label').textContent = 'Answer time left: ';
+      setMsg('msg-area', 'info', 'Your answer time is running. Press “Start recording” when you are ready to speak.', 'وقت إجابتك يمضي. اضغط «ابدأ التسجيل» عندما تكون جاهزاً للكلام.');
+      renderRecorder(); winTick();
+      clearInterval(S.winTimer); S.winTimer = setInterval(winTick, 250);
+    }
+    function winTick() {
+      var rem = (S.answerEnd - serverNow()) / 1000;
+      $('rec-time').textContent = fmtTime(rem);
+      if (rem <= 0) {
+        clearInterval(S.winTimer); S.winTimer = null; S.windowOpen = false; S.autoBusy = false;
+        setMsg('msg-area', 'warn', 'Answer time is over.', 'انتهى وقت الإجابة.');
+        autoBegin();   // the server stores "no answer" and the exam moves on
       }
     }
 
@@ -473,6 +499,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
         setMsg('msg-area', 'warn', res.missed ? 'The answer time for this part had already ended, so it was recorded as "no answer". Moving on…' : 'This answer was already saved. Moving on…', res.missed ? 'انتهى وقت الإجابة، تم تسجيلها «بدون إجابة». ننتقل إلى التالي…' : 'تم حفظ هذه الإجابة سابقاً.');
         setTimeout(autoAdvance, 2000); return;
       }
+      if (S.startMode === 'button') { S.autoBusy = false; openWindow(res.remainingSec); return; }
       var ok = await startRecorder(res.remainingSec);
       S.autoBusy = false;
       if (ok) { setMsg('msg-area', '', ''); }
@@ -558,7 +585,17 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
     async function onRecButton() {
       var sl = slot(S.q, S.part);
       if (sl.status === 'recording') { stopRecording(); return; }
-      if (S.auto) return;
+      if (S.auto) {
+        if (S.startMode === 'button' && S.windowOpen && sl.status === 'idle') {
+          var remain = (S.answerEnd - serverNow()) / 1000;
+          if (remain < 1) return;
+          S.windowOpen = false; clearInterval(S.winTimer); S.winTimer = null; $('rec-btn').disabled = true;
+          setMsg('msg-area', '', '');
+          var started = await startRecorder(remain);
+          if (!started) { S.autoBusy = false; openWindow(Math.max(1, (S.answerEnd - serverNow()) / 1000)); autoRetry(['The microphone could not start. Press the button again – your answer time is still running.', 'تعذّر تشغيل الميكروفون. اضغط الزر مرة أخرى – وقت إجابتك ما زال يمضي.']); }
+        }
+        return;
+      }
       if (prepRemaining(S.q) > 0) return;
       setMsg('msg-area', '', '');
       var btn = $('rec-btn'); btn.disabled = true;
@@ -686,7 +723,7 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
       clearInterval(S.prepTimer); clearInterval(S.recTimer); S.prepTimer = null; S.recTimer = null;
       if (S.recorder && S.recorder.state !== 'inactive') { S.recorder.onstop = null; try { S.recorder.stop(); } catch (e) { /* ignore */ } }
       Object.keys(S.slots).forEach(function (k) { if (S.slots[k].status === 'recording') S.slots[k] = { status: 'idle' }; });
-      clearInterval(S.gapTimer); S.gapTimer = null;
+      clearInterval(S.gapTimer); S.gapTimer = null; clearInterval(S.winTimer); S.winTimer = null; S.windowOpen = false;
       S.recorder = null; if (!S.auto) releaseStream();
     }
 
@@ -744,6 +781,10 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
     $('next-btn').addEventListener('click', onNext);
     $('submit-btn').addEventListener('click', onSubmit);
     $('back-btn').addEventListener('click', function () { openQuestion(S.questions.length); });
+    $('new-student-btn').addEventListener('click', function () {
+      if (!window.confirm('Start as a different student on this device?\nYour finished examination stays safe with your teacher.')) return;
+      storeDel(STORE_KEY); storeDel('kimza_start_key'); location.reload();
+    });
     $('code-btn').addEventListener('click', function () { showCodeModal(null); });
     $('code-copy').addEventListener('click', function () {
       var b = $('code-copy');
@@ -981,6 +1022,15 @@ var KIMZA_API_URL = 'https://script.google.com/macros/s/AKfycbwkH8eQqGNlz4MiFLtf
     });
     $('a-feedback').addEventListener('input', function () { T.dirty = true; $('fb-count').textContent = $('a-feedback').value.length; });
     $('save-grade').addEventListener('click', onSaveGrade);
+    $('cancel-attempt').addEventListener('click', async function () {
+      var name = T.current.attempt.studentName;
+      if (!window.confirm('Cancel the attempt of "' + name + '"?\n\nIt disappears from this list and the name can be used again. Nothing is deleted: the row stays in the Google Sheet (Status = Cancelled) and the recordings stay in Google Drive.')) return;
+      try {
+        var res = await guarded(function () { return api('teacherCancelAttempt', { token: T.token, attemptId: T.current.attempt.attemptId }); });
+        if (!res) return;
+        T.dirty = false; revokeAudio(); loadList(false);
+      } catch (e) { setMsg('save-msg', 'err', errText(e)[0]); }
+    });
     window.addEventListener('beforeunload', function (ev) { if (T.dirty) { ev.preventDefault(); ev.returnValue = ''; } });
 
     init();

@@ -229,6 +229,9 @@ audio{width:100%;max-width:520px;margin:12px 0}
       </div>
       <p class="muted small" id="done-time"></p>
       <p class="muted small">Your marks are not shown here. Your teacher will tell you your result.</p>
+      <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
+      <p class="muted small">This device remembers your examination. If someone else will use this device now, press the button below.<br><span class="ar">هذا الجهاز يتذكر اختبارك. إذا سيستخدمه طالب آخر الآن فاضغط الزر أدناه.</span></p>
+      <button class="btn secondary" id="new-student-btn" type="button">Start as a different student <span class="ar">ابدأ كطالب آخر</span></button>
     </div>
   </section>
 </main>
@@ -251,8 +254,8 @@ audio{width:100%;max-width:520px;margin:12px 0}
 <div id="mic-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mic-title">
   <div class="card">
     <h2 id="mic-title">Ready to start? <span class="ar small">هل أنت جاهز؟</span></h2>
-    <p>The exam runs <b>automatically</b>: preparation timer → your answer is recorded by itself → the next question starts. You cannot pause or re-record, so sit in a quiet place.</p>
-    <p class="ar">يعمل الاختبار <b>تلقائياً</b>: مؤقت التحضير ← يبدأ تسجيل إجابتك وحده ← ثم يبدأ السؤال التالي. لا يمكن الإيقاف المؤقت أو إعادة التسجيل، فاجلس في مكان هادئ.</p>
+    <p id="mic-p-en">The exam runs <b>automatically</b>: preparation timer → your answer is recorded by itself → the next question starts. You cannot pause or re-record, so sit in a quiet place.</p>
+    <p class="ar" id="mic-p-ar">يعمل الاختبار <b>تلقائياً</b>: مؤقت التحضير ← يبدأ تسجيل إجابتك وحده ← ثم يبدأ السؤال التالي. لا يمكن الإيقاف المؤقت أو إعادة التسجيل، فاجلس في مكان هادئ.</p>
     <p>Press the button, then press <b>Allow</b> when the browser asks for the microphone.</p>
     <div id="mic-msg" aria-live="polite"></div>
     <div class="row" style="justify-content:center;margin-top:10px"><button class="btn big" id="mic-go" type="button">🎤 Allow microphone and start <span class="ar">اسمح بالميكروفون وابدأ</span></button></div>
